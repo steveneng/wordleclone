@@ -1,15 +1,19 @@
 import "./App.css";
 import { useEffect, useState, useRef } from "react";
-import { wordBank } from "./wordbank";
-import { selectedWords } from "./selectedWords";
 import Keyboard from "./keyboard";
 import Modal from "./modal";
-
-const keyboardRows = [
-  ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
-  ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
-  ["entr", "z", "x", "c", "v", "b", "n", "m", "del"],
-];
+import { wordBank, keyboardRows } from "./constants";
+import { getNewWord } from "./util/getNewWord";
+import { getKeyBoardStructure } from "./util/getKeyBoardStructure";
+import WordGrid from "./wordGrid";
+import { getKeyCode } from "./util/getKeyCode";
+import { getNewBoard } from "./util/getNewBoard";
+import { testForSpelling } from "./util/checkForSpelling";
+import {
+  isLetterInPlace,
+  isWordLengthValid,
+  isWordSolution,
+} from "./util/checkSubmission";
 
 interface keyboardType {
   [keys: string]: {
@@ -19,8 +23,9 @@ interface keyboardType {
 }
 
 export default function App() {
-  const [currentCode, setcurrentCode] = useState<Array<any>>([]);
-  const [currentRow, setCurrentRow] = useState<Array<string>>([]);
+  const [currentCode, setcurrentCode] = useState<number[]>([]);
+  const [currentRow, setCurrentRow] = useState<string[]>([]);
+  const [currentGrid, setCurrentGrid] = useState<[][]>([]);
   const [solution, setSolution] = useState<string>("");
   const [rowCount, setRowCount] = useState<number>(0);
   const [error, setError] = useState(false);
@@ -31,6 +36,7 @@ export default function App() {
 
   const tile = useRef<HTMLDivElement>(null);
   const keyboardRef = useRef<HTMLDivElement>(null);
+  const timeOutID = useRef<number>(0);
 
   // generates  word of the day on load of screen
 
@@ -40,28 +46,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    // how works
-
-    // setSolution(word);
-    let randomWordIndex = Math.floor(
-      Math.random() * (selectedWords.length - 1)
-    );
-    // let word = selectedWords[randomWordIndex].toUpperCase();
-    let word = "APPLE";
-
+    let word = getNewWord();
+    let keyObj = getKeyBoardStructure();
     setSolution(word);
-
-    let keyObj: keyboardType = {};
-
-    for (let i = 0; i < keyboardRows.length; i++) {
-      for (let n = 0; n < keyboardRows[i].length; n++) {
-        keyObj[keyboardRows[i][n]] = {
-          status: "",
-          location: [i, n],
-        };
-      }
-    }
-
     setKeyState(keyObj);
 
     // adds event listener to track which keycode is pressed
@@ -75,16 +62,17 @@ export default function App() {
   useEffect(() => {
     if (!currentCode || !tile.current || !keyboardRef.current) return;
     let letter = String.fromCharCode(currentCode[0]);
+    let keyType = getKeyCode(currentCode);
     let row = tile.current.children[rowCount];
     //checks if current code is a letter
-    if (currentCode[0] < 91 && currentCode[0] > 64) {
+    if (keyType === "LETTER") {
       if (currentRow.length === 5) return;
       let newRow = [...currentRow, letter];
       row.children[currentRow.length].textContent = letter;
       setCurrentRow(newRow);
     }
     // on delete key, checks if current row is empty before popping element
-    else if (currentCode[0] === 8 && currentRow.length !== 0) {
+    else if (keyType === "DELETE" && currentRow.length !== 0) {
       row.children[currentRow.length - 1].textContent = "";
       let newRow = [...currentRow];
       newRow.pop();
@@ -92,19 +80,25 @@ export default function App() {
     }
 
     // on enter key press
-    else if (currentCode[0] === 13) {
+    else if (keyType === "ENTER") {
       // checks if word is long enough
-      if (currentRow.length !== 5) {
+      if (!isWordLengthValid(currentRow)) {
         console.log("word not long enough");
         setError(true);
       } else {
         // checks for spelling
-        if (wordBank.indexOf(currentRow.join("").toLowerCase()) < 0) {
+        if (testForSpelling(wordBank, currentRow)) {
+          if (timeOutID.current) {
+            clearTimeout(timeOutID.current);
+          }
           console.log("spelling is off");
           setError(true);
+          timeOutID.current = window.setTimeout((): void => {
+            setError(false);
+          }, 2000);
         } else {
           // checks if input is the solution and which parts are correct
-          let contained = false;
+
           setError(false);
           for (let i = 0; i < 5; i++) {
             let place = row.children[i].textContent as string;
@@ -117,7 +111,7 @@ export default function App() {
               ];
 
             // checks if letter is part of the solution
-            if (solution.indexOf(place) >= 0) {
+            if (isLetterInPlace(solution, place)) {
               // highlights square green if its in the correct place
               if (solution[i] === place) {
                 row.children[i].className = "contained-inplace";
@@ -126,85 +120,42 @@ export default function App() {
               }
               //  if letter is correct but not in correct place
               else {
-                // if there is repeating letters, will not highlight repeats yellows
-                // if (solution.indexOf(place) >= 0 && !contained) {
-                //   row.children[i].className = "contained";
-                //   keyStrokeTile.classList.add("contained");
-
-                //   contained = true;
-                // } else {
-                //   console.log("glitched: ", contained, place);
-                //   row.children[i].className = "not-contained";
-                // }
-
-                if (solution.indexOf(place) >= 0) {
-                  row.children[i].className = "contained";
-                  keyStrokeTile.classList.add("contained");
-                }
+                row.children[i].className = "contained";
+                keyStrokeTile.classList.add("contained");
               }
             }
             // if the item is not contained, will make background dark gray
-            else if (solution.indexOf(place) < 0) {
+            else if (!isLetterInPlace(solution, place)) {
               row.children[i].className = "not-contained";
               keyStrokeTile.classList.add("not-contained");
             }
           }
           // if guess is correct
 
-          if (currentRow.join("") === solution) {
+          if (isWordSolution(solution, currentRow)) {
             setToggleModal(true);
             setDidWin(true);
             return;
           }
 
-          if (rowCount < 5) {
-            setRowCount((val) => val + 1);
-          } else {
-            setToggleModal(true);
-          }
+          rowCount < 5 ? setRowCount((val) => val + 1) : setToggleModal(true);
+
           setCurrentRow([]);
-          contained = false;
         }
       }
     }
   }, [currentCode]);
 
   useEffect(() => {
-    console.log("test");
     if (gameOver && tile.current && keyboardRef.current) {
       setcurrentCode([]);
       setCurrentRow([]);
       setSolution("");
       setRowCount(0);
       setError(false);
-      let randomWordIndex = Math.floor(Math.random() * (wordBank.length - 1));
-      let word = wordBank[randomWordIndex].toUpperCase();
+      let word = getNewWord();
       setSolution(word);
-
-      for (let y = 0; y < 6; y++) {
-        for (let x = 0; x < 5; x++) {
-          tile.current.children[y].children[x].textContent = "";
-          tile.current.children[y].children[x].className = "";
-        }
-      }
-
-      for (let i = 0; i < keyboardRef.current.children.length; i++) {
-        for (
-          let n = 0;
-          n < keyboardRef.current.children[i].children.length;
-          n++
-        ) {
-          keyboardRef.current.children[i].children[n].classList.remove(
-            "not-contained"
-          );
-          keyboardRef.current.children[i].children[n].classList.remove(
-            "contained"
-          );
-          keyboardRef.current.children[i].children[n].classList.remove(
-            "contained-inplace"
-          );
-        }
-      }
+      getNewBoard(tile, keyboardRef);
       setGameOver(false);
     }
   }, [gameOver]);
@@ -220,19 +171,9 @@ export default function App() {
           win={didWin}
         />
       )}
-      {error && (
-        <div className="error">
-          Oops, check spelling or make sure its filled you fool
-        </div>
-      )}
+      {error && <div className="error">Check Spelling or Fill All Words</div>}
       <div ref={tile} className="tile-grid">
-        {Array.from(Array(6).keys()).map((i) => (
-          <div key={i} className="tile-row">
-            {Array.from(Array(5).keys()).map((i) => (
-              <div key={`${i}_col`}></div>
-            ))}
-          </div>
-        ))}
+        <WordGrid />
       </div>
 
       <Keyboard
